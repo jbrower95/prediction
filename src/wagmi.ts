@@ -1,15 +1,26 @@
 import { farcasterFrame } from "@farcaster/frame-wagmi-connector";
 import { http, createConfig } from "wagmi";
 import { base, mainnet } from "wagmi/chains";
-import { metaMask } from "wagmi/connectors";
+import { coinbaseWallet } from "wagmi/connectors";
+import { CHAIN_CONFIG } from "./constants/contracts";
+
+// Determine if we're in development mode using import.meta
+const isDevelopment = import.meta.env?.MODE === 'development';
+
+// Create a Chain object from our config
+const baseSepolia = {
+  ...CHAIN_CONFIG.baseSepolia,
+  id: CHAIN_CONFIG.baseSepolia.id as any,
+};
 
 export const config = createConfig({
-  chains: [base, mainnet],
+  chains: [baseSepolia, base, mainnet],
   connectors: [
-    ...[...(process.env.NODE_ENV === 'development' ? [metaMask()] : [])],
+    ...[...(isDevelopment ? [coinbaseWallet({preference: 'smartWalletOnly'})] : [])],
     farcasterFrame(),
   ],
   transports: {
+    [baseSepolia.id]: http(),
     [base.id]: http(),
     [mainnet.id]: http(),
   },

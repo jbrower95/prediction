@@ -12,13 +12,16 @@ export interface Prediction {
 }
 
 // Constants
-const APP_NAME = 'Prediction App';
+const APP_NAME = 'Prediction - Farcaster';
 const AUTH_KEY = 'prediction_auth';
 const EMPTY_CHALLENGE = new Uint8Array(32).fill(1).buffer;
 
 interface AuthState {
   credentialId: string; // Base64 encoded credential ID
   lastUsed: number; // Timestamp
+  userId: string; // Unique ID for the user
+  predictions?: Prediction[]; // Cached predictions data
+  cacheExpiry: number; // When the cache expires (timestamp)
 }
 
 // Check if WebAuthn and largeBlob are supported
@@ -34,12 +37,23 @@ export async function isLargeBlobSupported(): Promise<boolean> {
   if (!isWebAuthnSupported()) return false;
   
   try {
-    // @ts-ignore - TypeScript may not have updated types for this feature
-    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable() &&
-      // @ts-ignore
-      'largeBlob' in PublicKeyCredential.prototype.getClientExtensionResults();
+    // For Safari, we'll just assume largeBlob is supported if WebAuthn is supported
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    if (isSafari) {
+      return true;
+    }
+    
+    // For other browsers, check if the platform authenticator is available
+    const platformAuthenticatorAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    
+    // Currently all platform authenticators support largeBlob
+    return platformAuthenticatorAvailable;
   } catch (error) {
     console.error('Error checking largeBlob support:', error);
+    // Return true for Safari - we'll just assume it's supported
+    if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) {
+      return true;
+    }
     return false;
   }
 }
@@ -71,14 +85,41 @@ export function getAuthState(): AuthState | null {
   }
 }
 
+// Constants for cache management
+const CACHE_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours
+
 // Save auth state
-export function saveAuthState(credentialId: string): void {
+export function saveAuthState(
+  credentialId: string, 
+  userId: string = `user-${Date.now()}`,
+  predictions?: Prediction[]
+): void {
+  const currentTime = Date.now();
   const authState: AuthState = {
     credentialId,
-    lastUsed: Date.now()
+    lastUsed: currentTime,
+    userId,
+    predictions: predictions,
+    cacheExpiry: currentTime + CACHE_DURATION_MS
   };
   
   localStorage.setItem(AUTH_KEY, JSON.stringify(authState));
+}
+
+// Check if cache is expired
+export function isCacheExpired(): boolean {
+  const authState = getAuthState();
+  if (!authState) return true;
+  
+  return Date.now() > authState.cacheExpiry;
+}
+
+// Update cached predictions
+export function updateCachedPredictions(predictions: Prediction[]): void {
+  const authState = getAuthState();
+  if (!authState) return;
+  
+  saveAuthState(authState.credentialId, authState.userId, predictions);
 }
 
 // Clear auth state
@@ -87,7 +128,7 @@ export function clearAuthState(): void {
 }
 
 // Register a new passkey with largeBlob support
-export async function registerPasskey(displayName: string = 'Prediction User'): Promise<string> {
+export async function registerPasskey(): Promise<string> {
   if (!isWebAuthnSupported()) {
     throw new Error('WebAuthn is not supported in this browser');
   }
@@ -96,6 +137,9 @@ export async function registerPasskey(displayName: string = 'Prediction User'): 
     // Generate a random user ID
     const userId = new Uint8Array(16);
     window.crypto.getRandomValues(userId);
+    
+    // Generate a unique user identifier for localStorage
+    const userIdStr = `user-${Date.now()}`;
     
     // Create credential options
     const publicKeyCredentialCreationOptions: PublicKeyCredentialCreationOptions = {
@@ -106,8 +150,8 @@ export async function registerPasskey(displayName: string = 'Prediction User'): 
       },
       user: {
         id: userId,
-        name: 'user',
-        displayName: displayName,
+        name: 'Predictor',
+        displayName: 'Predictor',
       },
       pubKeyCredParams: [
         { type: 'public-key', alg: -7 }, // ES256
@@ -120,9 +164,7 @@ export async function registerPasskey(displayName: string = 'Prediction User'): 
         requireResidentKey: true,
         userVerification: 'required',
       },
-      // @ts-ignore - TypeScript may not have updated types for largeBlob extension
       extensions: {
-        // @ts-ignore
         largeBlob: {
           support: 'required',
         },
@@ -134,9 +176,9 @@ export async function registerPasskey(displayName: string = 'Prediction User'): 
       publicKey: publicKeyCredentialCreationOptions,
     }) as PublicKeyCredential;
     
-    // Store the credential ID
+    // Store the credential ID and user ID
     const credentialId = bytesToBase64(credential.rawId);
-    saveAuthState(credentialId);
+    saveAuthState(credentialId, userIdStr);
     
     // Initialize an empty predictions array in the largeBlob
     const emptyPredictions: Prediction[] = [];
@@ -165,9 +207,7 @@ export async function loginWithPasskey(): Promise<{
       publicKey: {
         challenge: EMPTY_CHALLENGE,
         userVerification: 'required',
-        // @ts-ignore - TypeScript may not have updated types for largeBlob extension
         extensions: {
-          // @ts-ignore
           largeBlob: {
             read: true,
           },
@@ -178,13 +218,17 @@ export async function loginWithPasskey(): Promise<{
     
     // Save the credential ID
     const credentialId = bytesToBase64(credential.rawId);
-    saveAuthState(credentialId);
+    
+    // We'll use the existing userId if available in the credential
+    // @ts-ignore
+    const userId = credential.response?.userHandle ? 
+      // @ts-ignore
+      new TextDecoder().decode(credential.response.userHandle) : 
+      `user-${Date.now()}`;
     
     // Get predictions from largeBlob
-    // @ts-ignore - TypeScript may not have updated types for largeBlob
     const extensionResults = credential.getClientExtensionResults();
     
-    // @ts-ignore
     const blobData = extensionResults.largeBlob?.blob;
     let predictions: Prediction[] = [];
     
@@ -197,10 +241,13 @@ export async function loginWithPasskey(): Promise<{
       }
     }
     
+    // Save state with predictions in cache
+    saveAuthState(credentialId, userId, predictions);
+    
     return { 
       credentialId, 
       hasData: !!blobData,
-      predictions: predictions,
+      predictions,
     };
   } catch (error) {
     console.error('Error logging in with passkey:', error);
@@ -235,9 +282,7 @@ export async function storePredictionsToLargeBlob(
       ],
       userVerification: 'required',
       timeout: 60000,
-      // @ts-ignore - TypeScript may not have updated types for largeBlob extension
       extensions: {
-        // @ts-ignore
         largeBlob: {
           write: predictionsBuffer,
         },
@@ -249,11 +294,9 @@ export async function storePredictionsToLargeBlob(
       publicKey: publicKeyCredentialRequestOptions,
     }) as PublicKeyCredential;
     
-    // @ts-ignore - TypeScript may not have updated types for largeBlob
     const extensionsResults = assertion.getClientExtensionResults();
     
     // Check if the write was successful
-    // @ts-ignore
     return extensionsResults.largeBlob?.written === true;
   } catch (error) {
     console.error('Error storing predictions in largeBlob:', error);
@@ -281,9 +324,7 @@ export async function getPredictionsFromLargeBlob(credentialId: BufferSource): P
       ],
       userVerification: 'required',
       timeout: 60000,
-      // @ts-ignore - TypeScript may not have updated types for largeBlob extension
       extensions: {
-        // @ts-ignore
         largeBlob: {
           read: true,
         },
@@ -295,13 +336,10 @@ export async function getPredictionsFromLargeBlob(credentialId: BufferSource): P
       publicKey: publicKeyCredentialRequestOptions,
     }) as PublicKeyCredential;
     
-    // @ts-ignore - TypeScript may not have updated types for largeBlob
     const extensionsResults = assertion.getClientExtensionResults();
     
     // Parse the retrieved predictions
-    // @ts-ignore
     if (extensionsResults.largeBlob?.blob) {
-      // @ts-ignore
       const blobData = extensionsResults.largeBlob.blob;
       const predictionsData = new TextDecoder().decode(blobData);
       return JSON.parse(predictionsData) as Prediction[];
@@ -323,14 +361,26 @@ export async function addPrediction(prediction: Prediction): Promise<boolean> {
   
   const credentialId = base64ToBytes(authState.credentialId);
   
-  // Get existing predictions
-  const existingPredictions = await getPredictionsFromLargeBlob(credentialId) || [];
+  // Get existing predictions (from cache if available and not expired)
+  let existingPredictions: Prediction[];
+  if (authState.predictions && !isCacheExpired()) {
+    existingPredictions = authState.predictions;
+  } else {
+    existingPredictions = await getPredictionsFromLargeBlob(credentialId) || [];
+  }
   
   // Add new prediction
   const updatedPredictions = [...existingPredictions, prediction];
   
   // Store updated predictions
-  return await storePredictionsToLargeBlob(updatedPredictions, credentialId);
+  const success = await storePredictionsToLargeBlob(updatedPredictions, credentialId);
+  
+  // Update cache if storage was successful
+  if (success) {
+    updateCachedPredictions(updatedPredictions);
+  }
+  
+  return success;
 }
 
 // Get all predictions for the current user
@@ -340,8 +390,21 @@ export async function getAllPredictions(): Promise<Prediction[]> {
     throw new Error('Not authenticated. Log in first.');
   }
   
+  // Use cache if available and not expired
+  if (authState.predictions && !isCacheExpired()) {
+    console.log('Using cached predictions data');
+    return authState.predictions;
+  }
+  
+  // Cache expired or not available, fetch from WebAuthn
+  console.log('Fetching predictions from WebAuthn');
   const credentialId = base64ToBytes(authState.credentialId);
-  return await getPredictionsFromLargeBlob(credentialId) || [];
+  const predictions = await getPredictionsFromLargeBlob(credentialId) || [];
+  
+  // Update cache
+  updateCachedPredictions(predictions);
+  
+  return predictions;
 }
 
 // Fallback functions for development/testing or browsers without WebAuthn support

@@ -1,86 +1,193 @@
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { base } from "wagmi/chains";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, getAccount, getClient } from "wagmi";
+import { PREDICTION_CONTRACT_ABI, PREDICTION_CONTRACT_ADDRESS, CHAIN_CONFIG } from "./constants/contracts";
 
-// Simple contract ABI for storing prediction hashes
-// In a real implementation, you would deploy this contract to Base
-export const PREDICTION_ABI = [
-  {
-    inputs: [{ internalType: "bytes32", name: "hash", type: "bytes32" }],
-    name: "storePrediction",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    name: "predictions",
-    outputs: [{ internalType: "bytes32", name: "", type: "bytes32" }],
-    stateMutability: "view",
-    type: "function",
-  },
-];
-
-// This would be your deployed contract address on Base
-// For this prototype, we'll use a placeholder
-export const PREDICTION_CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-// Hook for storing prediction hash
-export function useStorePrediction() {
-  const { isConnected } = useAccount();
+// Hook for submitting a prediction hash on-chain
+export function useSubmitPrediction() {
+  const { isConnected, address } = useAccount();
   
-  // Use wagmi's useWriteContract hook (renamed from useContractWrite in v2)
+  // Use wagmi's useWriteContract hook for contract writing
   const { 
-    data: hash,
-    isPending,
-    writeContract
+    isPending, 
+    writeContractAsync,
   } = useWriteContract();
   
-  // Wait for transaction
-  const { 
-    isLoading: isConfirming,
-    isSuccess 
-  } = useWaitForTransactionReceipt({
-    hash,
-  });
-  
-  // Store prediction hash on Base blockchain
-  const storePrediction = async (predictionHash: string): Promise<string | null> => {
-    if (!isConnected || !writeContract) {
+  // Submit prediction hash to the contract
+  const submitPrediction = async (predictionHash: string): Promise<string | null> => {
+    if (!isConnected || !address) {
       throw new Error("Wallet not connected");
     }
     
     try {
-      // Convert the hash if needed
-      const hashAsBytes32 = predictionHash.startsWith("0x") ? predictionHash : `0x${predictionHash}`;
+      console.log("Starting submission, connected address:", address);
       
-      // Call contract
-      const txHash = await writeContract({
-        address: PREDICTION_CONTRACT_ADDRESS,
-        abi: PREDICTION_ABI,
-        functionName: "storePrediction",
+      // Convert the hash if needed
+      const hashAsBytes32 = predictionHash.startsWith("0x") ? (predictionHash as `0x${string}`) : (`0x${predictionHash}` as `0x${string}`);
+      
+      console.log("Prepared hash:", hashAsBytes32);
+      console.log("Using contract:", PREDICTION_CONTRACT_ADDRESS);
+      console.log("Chain ID:", CHAIN_CONFIG.baseSepolia.id);
+      
+      // Use the hook's writeContractAsync function instead of the action
+      const hash = await writeContractAsync({
+        address: PREDICTION_CONTRACT_ADDRESS as `0x${string}`,
+        abi: PREDICTION_CONTRACT_ABI,
+        functionName: "submit",
         args: [hashAsBytes32],
-        chainId: base.id,
+        chainId: CHAIN_CONFIG.baseSepolia.id,
       });
       
-      // In wagmi v2, writeContract returns void
-      // So we need to get the hash from elsewhere
-      return typeof txHash === 'string' ? txHash : 'tx-hash-placeholder';
-    } catch (error) {
-      console.error("Error storing prediction on blockchain:", error);
-      return null;
+      console.log("Transaction submitted with hash:", hash);
+      
+      if (!hash) {
+        console.error("No transaction hash returned");
+        throw new Error("Transaction failed - no hash returned");
+      }
+      
+      return hash;
+    } catch (error: any) {
+      console.error("Error submitting prediction on blockchain:", error);
+      
+      // More specific error messages
+      if (error.message?.includes('user rejected')) {
+        throw new Error("Transaction rejected in wallet");
+      } else if (error.message?.includes('network')) {
+        throw new Error("Network error - please make sure you're connected to Base Sepolia");
+      } else {
+        throw error;
+      }
     }
   };
   
   return {
-    storePrediction,
-    isLoading: isPending || isConfirming,
-    isSuccess,
-    txHash: hash,
+    submitPrediction,
+    isLoading: isPending,
+    isSuccess: false, // We'll manage this manually
   };
 }
 
-// Mock function for prototype testing
-export async function mockStorePrediction(_predictionHash: string): Promise<string> {
+// Hook for revealing a prediction
+export function useRevealPrediction() {
+  const { isConnected, address } = useAccount();
+  
+  // Use wagmi's useWriteContract hook for contract writing
+  const { 
+    isPending,
+    writeContractAsync
+  } = useWriteContract();
+  
+  // Reveal a prediction with its content and salt
+  const revealPrediction = async (index: number, content: string, salt: string): Promise<string | null> => {
+    if (!isConnected || !address) {
+      throw new Error("Wallet not connected");
+    }
+    
+    try {
+      console.log("Starting reveal for index:", index);
+      console.log("Content:", content);
+      console.log("Salt:", salt);
+      
+      // Use the hook's writeContractAsync function instead of the action
+      const hash = await writeContractAsync({
+        address: PREDICTION_CONTRACT_ADDRESS as `0x${string}`,
+        abi: PREDICTION_CONTRACT_ABI,
+        functionName: "reveal",
+        args: [BigInt(index), content, salt],
+        chainId: CHAIN_CONFIG.baseSepolia.id,
+      });
+      
+      console.log("Reveal transaction submitted with hash:", hash);
+      
+      if (!hash) {
+        console.error("No transaction hash returned for reveal");
+        throw new Error("Reveal transaction failed - no hash returned");
+      }
+      
+      return hash;
+    } catch (error: any) {
+      console.error("Error revealing prediction on blockchain:", error);
+      
+      // More specific error messages
+      if (error.message?.includes('user rejected')) {
+        throw new Error("Reveal transaction rejected in wallet");
+      } else if (error.message?.includes('network')) {
+        throw new Error("Network error - please make sure you're connected to Base Sepolia");
+      } else if (error.message?.includes('match')) {
+        throw new Error("Content does not match the stored hash");
+      } else {
+        throw error;
+      }
+    }
+  };
+  
+  return {
+    revealPrediction,
+    isLoading: isPending,
+    isSuccess: false,
+  };
+}
+
+// Hook to get all predictions for the current user
+export function useGetAllPredictions() {
+  const { address } = useAccount();
+  
+  const { 
+    data, 
+    isLoading, 
+    isError,
+    error,
+    refetch
+  } = useReadContract({
+    address: PREDICTION_CONTRACT_ADDRESS as `0x${string}`,
+    abi: PREDICTION_CONTRACT_ABI,
+    functionName: "getAllPredictions",
+    args: address ? [address] : undefined,
+    query: {
+      enabled: !!address,
+    },
+  });
+  
+  return {
+    predictions: data,
+    isLoading,
+    isError,
+    error,
+    refetch
+  };
+}
+
+// Hook to verify a specific prediction
+export function useVerifyPrediction(predictionHash: string) {
+  const { address } = useAccount();
+  
+  const hashAsBytes32 = predictionHash.startsWith("0x") ? (predictionHash as `0x${string}`) : (`0x${predictionHash}` as `0x${string}`);
+  
+  const { 
+    data, 
+    isLoading, 
+    isError,
+    error
+  } = useReadContract({
+    address: PREDICTION_CONTRACT_ADDRESS as `0x${string}`,
+    abi: PREDICTION_CONTRACT_ABI,
+    functionName: "verifyPrediction",
+    args: address && predictionHash ? [address, hashAsBytes32] : undefined,
+    query: {
+      enabled: !!address && !!predictionHash,
+    },
+  });
+  
+  return {
+    verification: data,
+    isLoading,
+    isError,
+    error
+  };
+}
+
+// Mock function for prototype testing or when contract is not yet deployed
+export async function mockSubmitPrediction(_predictionHash: string): Promise<string> {
+  console.log("Using mock implementation for predictionHash:", _predictionHash);
+  
   // Simulate blockchain confirmation delay
   await new Promise(resolve => setTimeout(resolve, 1000));
   
@@ -89,5 +196,25 @@ export async function mockStorePrediction(_predictionHash: string): Promise<stri
     Math.floor(Math.random() * 16).toString(16)
   ).join('')}`;
   
+  console.log("Generated fake transaction hash:", fakeHash);
+  return fakeHash;
+}
+
+// Mock function for revealing predictions
+export async function mockRevealPrediction(_index: number, _content: string, _salt: string): Promise<string> {
+  console.log("Using mock implementation for reveal:");
+  console.log("Index:", _index);
+  console.log("Content:", _content);
+  console.log("Salt:", _salt);
+  
+  // Simulate blockchain confirmation delay
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Generate a fake transaction hash
+  const fakeHash = `0x${Array.from({ length: 64 }, () => 
+    Math.floor(Math.random() * 16).toString(16)
+  ).join('')}`;
+  
+  console.log("Generated fake reveal transaction hash:", fakeHash);
   return fakeHash;
 }

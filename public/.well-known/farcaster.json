@@ -1,1 +1,11 @@
-{}
+{
+    "frame": {
+        "version": "1.0.0",
+        "name": "Prediction",
+        "homeUrl": "https://jbrower95.github.io/prediction",
+        "iconUrl": "https://jbrower95.github.io/prediction/prediction-logo.png",
+        "splashBackgroundColor": "#000000",
+        "subtitle": "Make predictions, reveal them later.",
+        "description": "With Prediction, you can predict the future now, and reveal your guidance later. What will you predict?"
+    }
+}
