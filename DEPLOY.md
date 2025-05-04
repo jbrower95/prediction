@@ -4,11 +4,11 @@ This document explains how to deploy the Prediction app to GitHub Pages.
 
 ## Automatic Deployment
 
-The app is configured with GitHub Actions to automatically deploy to GitHub Pages whenever changes are pushed to the `main` branch.
+The app is configured with GitHub Actions to automatically deploy to GitHub Pages whenever changes are pushed to the `main` or `master` branch.
 
 ### How It Works
 
-1. When you push to `main`, the GitHub Actions workflow in `.github/workflows/deploy.yml` triggers
+1. When you push to either `main` or `master` branch, the GitHub Actions workflow in `.github/workflows/deploy.yml` triggers
 2. It builds the app with the correct base path (`/prediction/`)
 3. The built assets are deployed to GitHub Pages
 4. The app becomes available at: https://jbrower95.github.io/prediction/

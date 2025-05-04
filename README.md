@@ -91,6 +91,12 @@ The app uses WebAuthn passkeys with the largeBlob extension to securely store pr
 
 This app works with Warpcast and supports Farcaster Frames for sharing predictions.
 
+## Deployment
+
+The app is automatically deployed to GitHub Pages at [jbrower95.github.io/prediction](https://jbrower95.github.io/prediction) when changes are pushed to the `main` or `master` branch.
+
+For more information about deployment, see [DEPLOY.md](./DEPLOY.md).
+
 ## License
 
 MIT
