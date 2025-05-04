@@ -1,4 +1,4 @@
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, getAccount, getClient } from "wagmi";
+import { useAccount, useWriteContract, useReadContract } from "wagmi";
 import { PREDICTION_CONTRACT_ABI, PREDICTION_CONTRACT_ADDRESS, CHAIN_CONFIG } from "./constants/contracts";
 
 // Hook for submitting a prediction hash on-chain

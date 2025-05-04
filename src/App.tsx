@@ -14,7 +14,7 @@ import {
   storeInLocalStorage,
   getFromLocalStorage
 } from "./webauthn";
-import { mockSubmitPrediction, useSubmitPrediction, useRevealPrediction } from "./blockchain";
+import { mockSubmitPrediction, useSubmitPrediction } from "./blockchain";
 import { PREDICTION_CONTRACT_ADDRESS, CHAIN_CONFIG } from "./constants/contracts";
 
 function Toast({ message }: { message: string }) {
@@ -468,10 +468,16 @@ function PredictionsView({ webAuthnSupported, largeBlobSupported, onCreateNew }:
     const message = `I predicted "${prediction.content}" ${timeAgo} ago. Verified on Base blockchain: ${txLink}\n\nMake your own predictions at ${appUrl}`;
     
     // Use Farcaster SDK if available
-    if (typeof sdk !== 'undefined' && sdk.actions && sdk.actions.openCastComposer) {
-      sdk.actions.openCastComposer({
-        text: message,
-      });
+    if (typeof sdk !== 'undefined' && sdk.actions) {
+      // Use composeCast for newer versions of the SDK
+      if (sdk.actions.composeCast) {
+        sdk.actions.composeCast({
+          text: message,
+        });
+      } else {
+        // Fallback to Warpcast website
+        window.open(`https://warpcast.com/~/compose?text=${encodeURIComponent(message)}`, '_blank');
+      }
     } else {
       // Fallback to Warpcast website
       window.open(`https://warpcast.com/~/compose?text=${encodeURIComponent(message)}`, '_blank');
